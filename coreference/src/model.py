@@ -1,5 +1,5 @@
 import torch.nn as nn
-from transformers import AutoConfig, AutoModel, BertConfig, RobertaModel
+from transformers import AutoConfig, AutoModel, BertConfig, RobertaModel, T5EncoderModel, T5Config
 import torch
 from .utils import to_cuda, to_var, flatten, fill_expand, pad_and_stack
 import torch.nn.functional as F
@@ -10,6 +10,9 @@ class EventEncoder(nn.Module):
         config = AutoConfig.from_pretrained(model_name)
         if isinstance(config, BertConfig):
             self.model = RobertaModel.from_pretrained(model_name)
+        elif isinstance(config, T5Config):
+            print("using t5 encoder")
+            self.model = T5EncoderModel.from_pretrained(model_name)
         else:
             raise NotImplementedError
         self.model.resize_token_embeddings(vocab_size)
@@ -88,7 +91,7 @@ class PairScorer(nn.Module):
         return all_probs
 
 class Model(nn.Module):
-    def __init__(self, vocab_size, model_name="roberta-base", embed_dim=768, aggr="mean"):
+    def __init__(self, vocab_size, model_name="/hy-tmp/model/flan-t5-base", embed_dim=768, aggr="mean"):
         nn.Module.__init__(self)
         self.encoder = EventEncoder(vocab_size, model_name=model_name, aggr=aggr)
         self.scorer = PairScorer(embed_dim=embed_dim)

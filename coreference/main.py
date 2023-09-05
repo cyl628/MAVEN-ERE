@@ -9,7 +9,7 @@ from tqdm import tqdm
 from src.data import get_dataloader as get_maven_dataloader
 from src.data_ace import get_dataloader as get_ace_dataloader
 from src.data_kbp import get_dataloader as get_kbp_dataloader
-from transformers import AdamW, RobertaTokenizer, get_linear_schedule_with_warmup
+from transformers import AdamW, RobertaTokenizer, get_linear_schedule_with_warmup, AutoTokenizer
 import argparse
 from torch.optim import Adam
 import os
@@ -108,7 +108,10 @@ if __name__ == "__main__":
 
     output_dir = Path(f"./output/{args.seed}/{args.dataset}_{args.sample_rate}")
     output_dir.mkdir(exist_ok=True, parents=True)
-    sys.stdout = open(os.path.join(output_dir, "log.txt"), 'w')
+    if not args.eval_only:
+        sys.stdout = open(os.path.join(output_dir, "log.txt"), 'w')
+    else:
+        sys.stdout = open(os.path.join(output_dir, "log-test.txt"), 'w')
     print(vars(args))
     if args.dataset == "maven":
         get_dataloader = get_maven_dataloader
@@ -119,13 +122,14 @@ if __name__ == "__main__":
     else:
         raise NotImplementedError
     set_seed(args.seed)
-    tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+    # tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+    tokenizer = AutoTokenizer.from_pretrained("/hy-tmp/model/flan-t5-base")
 
     print("loading data...")
     if not args.eval_only:
-        train_dataloader = get_dataloader(tokenizer, "train", max_length=256, shuffle=True, batch_size=args.batch_size, sample_rate=args.sample_rate)
-        dev_dataloader = get_dataloader(tokenizer, "valid", max_length=256, shuffle=False, batch_size=args.batch_size)
-    test_dataloader = get_dataloader(tokenizer, "test", max_length=256, shuffle=False, batch_size=args.batch_size)
+        train_dataloader = get_dataloader(tokenizer, "train", max_length=512, shuffle=True, batch_size=args.batch_size, sample_rate=args.sample_rate)
+        dev_dataloader = get_dataloader(tokenizer, "valid", max_length=512, shuffle=False, batch_size=args.batch_size)
+    test_dataloader = get_dataloader(tokenizer, "test", max_length=512, shuffle=False, batch_size=args.batch_size)
 
     print("loading model...")
     model = Model(len(tokenizer))
@@ -206,24 +210,26 @@ if __name__ == "__main__":
                         state = {"model":model.state_dict(), "optimizer":optimizer.state_dict(), "scheduler": scheduler.state_dict()}
                         torch.save(state, os.path.join(output_dir, "best"))
     
-    if args.dataset == "maven":
-        print("*" * 30 + "Predict"+ "*" * 30)
-        if not args.eval_only or not args.load_ckpt:
-            if os.path.exists(os.path.join(output_dir, "best")):
-                print(f"loading from {os.path.join(output_dir, 'best')}")
-                state = torch.load(os.path.join(output_dir, "best"))
-                model.load_state_dict(state["model"])
-        all_preds = predict(model, test_dataloader)
-        dump_result("../data/MAVEN_ERE/test.jsonl", all_preds, output_dir)
-    else:
-        print("*" * 30 + "Test"+ "*" * 30)
-        if not args.eval_only or not args.load_ckpt:
-            if os.path.exists(os.path.join(output_dir, "best")):
-                print(f"loading from {os.path.join(output_dir, 'best')}")
-                state = torch.load(os.path.join(output_dir, "best"))
-                model.load_state_dict(state["model"])
-        res = evaluate(model, test_dataloader, metrics, metric_names, desc="Test")
-        with open(os.path.join(output_dir, f"test_result.json"), "w", encoding="utf-8") as f:
-            json.dump(res, f, indent=4)
+    # if args.dataset == "maven":
+    #     print("*" * 30 + "Predict"+ "*" * 30)
+    #     if not args.load_ckpt:
+    #         if os.path.exists(os.path.join(output_dir, "best")):
+    #             print(f"loading from {os.path.join(output_dir, 'best')}")
+    #             state = torch.load(os.path.join(output_dir, "best"))
+    #             model.load_state_dict(state["model"])
+    #     all_preds = predict(model, test_dataloader)
+    #     dump_result("../data/MAVEN_ERE/test.jsonl", all_preds, output_dir)
+    # else:
+    print("*" * 30 + "Test"+ "*" * 30)
+    if not args.load_ckpt:
+        if os.path.exists(os.path.join(output_dir, "best")):
+            print(f"loading from {os.path.join(output_dir, 'best')}")
+            state = torch.load(os.path.join(output_dir, "best"))
+            model.load_state_dict(state["model"])
+        else:
+            print(f"[WARNING] no best model provided or present at {output_dir}, evaluate on model without task-specific training")
+    res = evaluate(model, test_dataloader, metrics, metric_names, desc="Test")
+    with open(os.path.join(output_dir, f"test_result.json"), "w", encoding="utf-8") as f:
+        json.dump(res, f, indent=4)
 
     sys.stdout.close()

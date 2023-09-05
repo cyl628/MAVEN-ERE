@@ -5,7 +5,7 @@ import random
 import numpy as np
 from tqdm import tqdm
 from src.data import myDataset, get_dataloader
-from transformers import AdamW, RobertaTokenizer, get_linear_schedule_with_warmup
+from transformers import AdamW, RobertaTokenizer, get_linear_schedule_with_warmup, AutoTokenizer
 from src.utils import get_predicted_clusters, get_event2cluster, fill_expand
 from src.metrics import evaluate_documents, b_cubed, ceafe, muc, Evaluator, blanc
 from src.dump_result import coref_dump,causal_dump,temporal_dump,subevent_dump
@@ -223,7 +223,9 @@ if __name__ == "__main__":
 
     set_seed(args.seed)
     
-    tokenizer = RobertaTokenizer.from_pretrained("/data/MODELS/roberta-base")
+    # tokenizer = RobertaTokenizer.from_pretrained("/data/MODELS/roberta-base")
+    tokenizer = AutoTokenizer.from_pretrained("/hy-tmp/model/flan-t5-base")
+
     print("loading data...")
     if not args.eval_only:
         train_dataloader = get_dataloader(tokenizer, "train", max_length=256, shuffle=True, batch_size=args.batch_size, ignore_nonetype=args.ignore_nonetype, sample_rate=args.sample_rate)
@@ -231,7 +233,7 @@ if __name__ == "__main__":
     test_dataloader = get_dataloader(tokenizer, "test", max_length=256, shuffle=False, batch_size=args.batch_size, ignore_nonetype=args.ignore_nonetype)
 
     print("loading model...")
-    model = Model(len(tokenizer))
+    model = Model(len(tokenizer), model_name="/hy-tmp/model/flan-t5-base")
     model = to_cuda(model)
 
     if not args.eval_only:
@@ -401,4 +403,8 @@ if __name__ == "__main__":
             subevent_dump("../data/MAVEN_ERE/test.jsonl", all_preds, dump_results)
     with open(os.path.join(output_dir, "test_prediction.jsonl"), "w")as f:
         f.writelines("\n".join([json.dumps(dump_results[key]) for key in dump_results]))
+    
+    res = evaluate(model, test_dataloader, desc="Validation")
+    with open(os.path.join(output_dir, "test_results.jsonl"), "w")as f:
+        json.dump(res, f)
     sys.stdout.close()

@@ -184,7 +184,7 @@ class myDataset(Dataset):
             spans = example.sorted_event_spans
             words = example.words
             event_id = 0
-            sub_input_ids = [self.tokenizer.cls_token_id]
+            sub_input_ids = []
             sub_event_spans = []
             for sent_id, word in enumerate(words):
                 i = 0
@@ -223,12 +223,12 @@ class myDataset(Dataset):
                         tmp_event_spans_part1, tmp_event_spans = split_spans(split_point, tmp_event_spans)
                         tmp_input_ids_part1, tmp_input_ids = tmp_input_ids[:split_point], tmp_input_ids[split_point:]
 
-                        input_ids.append([self.tokenizer.cls_token_id] + tmp_input_ids_part1)
+                        input_ids.append([] + tmp_input_ids_part1)
                         event_spans.append([(sp[0]+1, sp[1]+1) for sp in tmp_event_spans_part1])
                         tmp_event_spans = [(sp[0]-len(tmp_input_ids_part1), sp[1]-len(tmp_input_ids_part1)) for sp in tmp_event_spans]
 
                     sub_event_spans = [(sp[0]+1, sp[1]+1) for sp in tmp_event_spans]
-                    sub_input_ids = [self.tokenizer.cls_token_id] + tmp_input_ids
+                    sub_input_ids = [] + tmp_input_ids
             if sub_input_ids:
                 input_ids.append(sub_input_ids)
                 event_spans.append(sub_event_spans)
