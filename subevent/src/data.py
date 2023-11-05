@@ -71,6 +71,9 @@ class Document:
                     continue
                 self.labels.append(pair2rel.get((e1["id"], e2["id"]), REL2ID["NONE"]))
         assert len(self.labels) == len(self.events) ** 2 - len(self.events)
+    
+    def valid(self):
+        return len(self.events) > 1
 
 class myDataset(Dataset):
     def __init__(self, tokenizer, data_dir, split, max_length=512, sample_rate=None):
@@ -89,7 +92,7 @@ class myDataset(Dataset):
         for line in lines:
             data = json.loads(line.strip())
             doc = Document(data)
-            if doc.sorted_event_spans:
+            if doc.sorted_event_spans and doc.valid():
                 self.examples.append(doc)
     
     def tokenize(self):
@@ -102,7 +105,7 @@ class myDataset(Dataset):
             spans = example.sorted_event_spans
             words = example.words
             event_id = 0
-            sub_input_ids = [self.tokenizer.cls_token_id]
+            sub_input_ids = []
             sub_event_spans = []
             for sent_id, word in enumerate(words):
                 i = 0
@@ -125,7 +128,7 @@ class myDataset(Dataset):
                     tmp_input_ids += self.tokenizer(word[i:], is_split_into_words=True, add_special_tokens=False)["input_ids"]
                 
                 # add SEP between sentences
-                tmp_input_ids.append(self.tokenizer.sep_token_id)
+                # tmp_input_ids.append(self.tokenizer.sep_token_id)
 
                 if len(sub_input_ids) + len(tmp_input_ids) <= self.max_length:
                     sub_event_spans += [(sp[0]+len(sub_input_ids), sp[1]+len(sub_input_ids)) for sp in tmp_event_spans]
@@ -140,12 +143,12 @@ class myDataset(Dataset):
                             split_point -= 1
                         tmp_event_spans_part1, tmp_event_spans = split_spans(split_point, tmp_event_spans)
                         tmp_input_ids_part1, tmp_input_ids = tmp_input_ids[:split_point], tmp_input_ids[split_point:]
-                        input_ids.append([self.tokenizer.cls_token_id] + tmp_input_ids_part1)
+                        input_ids.append(tmp_input_ids_part1)
                         event_spans.append([(sp[0]+1, sp[1]+1) for sp in tmp_event_spans_part1])
                         tmp_event_spans = [(sp[0]-len(tmp_input_ids_part1), sp[1]-len(tmp_input_ids_part1)) for sp in tmp_event_spans]
 
                     sub_event_spans = [(sp[0]+1, sp[1]+1) for sp in tmp_event_spans]
-                    sub_input_ids = [self.tokenizer.cls_token_id] + tmp_input_ids
+                    sub_input_ids = tmp_input_ids
             if sub_input_ids:
                 input_ids.append(sub_input_ids)
                 event_spans.append(sub_event_spans)
@@ -191,9 +194,15 @@ def collator(data):
     collate_data["max_label_length"] = max_label_length
     return collate_data
 
-def get_dataloader(tokenizer, split, data_dir="../data", max_length=128, batch_size=8, shuffle=True, sample_rate=None):
+from torch.utils.data.distributed import DistributedSampler
+def get_dataloader(tokenizer, split, data_dir="../data", max_length=128, batch_size=8, shuffle=True, sample_rate=None, ddp=False):
     dataset = myDataset(tokenizer, data_dir, split, max_length=max_length, sample_rate=sample_rate)
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collator)
+    if not ddp or split in ["valid", "test"]:
+        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collator), None
+    else:
+        sampler = DistributedSampler(dataset, shuffle=True)
+        return DataLoader(dataset, batch_size=batch_size, sampler=sampler, collate_fn=collator), sampler
+
 
 if __name__ == "__main__":
     from transformers import RobertaTokenizer

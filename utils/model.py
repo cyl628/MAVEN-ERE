@@ -1,19 +1,29 @@
 import torch.nn as nn
-from transformers import AutoConfig, AutoModel, BertConfig, RobertaModel
+from transformers import AutoConfig, AutoModel, BertConfig, RobertaModel, T5Config, T5EncoderModel
 import torch
 from .utils import to_cuda, pad_and_stack
 import torch.nn.functional as F
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 class EventEncoder(nn.Module):
-    def __init__(self, vocab_size, model_name="roberta-base", aggr="mean"):
+    def __init__(self, vocab_size, model_name="roberta-base", aggr="mean", ddp=False, rank=0):
         nn.Module.__init__(self)
         config = AutoConfig.from_pretrained(model_name)
         if isinstance(config, BertConfig):
             self.model = RobertaModel.from_pretrained(model_name)
+        elif isinstance(config, T5Config):
+            print("using t5 encoder")
+            self.model = T5EncoderModel.from_pretrained(model_name)
         else:
             raise NotImplementedError
         self.model.resize_token_embeddings(vocab_size)
-        self.model = nn.DataParallel(self.model)
+        # if ddp:
+        #     torch.cuda.set_device(rank)
+        #     self.model = DDP(self.model.cuda())
+        # else:
+        #     print("model parallel")
+        #     self.model.parallelize()
+        # self.model = nn.DataParallel(self.model)
         self.aggr = aggr
     
     def forward(self, inputs):
@@ -22,7 +32,12 @@ class EventEncoder(nn.Module):
         event_spans = inputs["event_spans"]
         doc_splits = inputs["splits"]
         event_embed = []
-        output = self.model(input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=True).last_hidden_state
+        bs = 1
+        output = []
+        for j in range(len(input_ids)):
+            output.append(self.model(input_ids=input_ids[j*bs:(j+1)*bs], attention_mask=attention_mask[j*bs:(j+1)*bs], output_hidden_states=True).last_hidden_state)
+        # output = self.model(input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=True).last_hidden_state
+        output = torch.cat(output)
         for i in range(0, len(doc_splits)-1):
             embed = []
             doc_embed = output[doc_splits[i]:doc_splits[i+1]]
@@ -84,10 +99,11 @@ class PairScorer(nn.Module):
         return all_scores
 
 class Model(nn.Module):
-    def __init__(self, vocab_size, out_dim=7, model_name="roberta-base", embed_dim=768, aggr="mean"):
+    def __init__(self, vocab_size, out_dim=7, model_name="roberta-base", embed_dim=768, aggr="mean", ddp=False, rank=0):
         nn.Module.__init__(self)
-        self.encoder = EventEncoder(vocab_size, model_name=model_name, aggr=aggr)
-        self.scorer = PairScorer(embed_dim=embed_dim, out_dim=out_dim)
+        self.encoder = EventEncoder(vocab_size, model_name=model_name, aggr=aggr, ddp=ddp, rank=rank)
+        config = AutoConfig.from_pretrained(model_name)
+        self.scorer = PairScorer(embed_dim=config.hidden_size, out_dim=out_dim)
 
     def forward(self, inputs):
         output = self.encoder(inputs)

@@ -16,7 +16,9 @@ class Document:
     def __init__(self, data):
         self.id = data["id"]
         self.words = data["tokens"]
-        self.events = data["event_mentions"]
+        self.events = []
+        for e in data["events"]:
+            self.events += e["mention"]
 
         self.sort_events()
         self.get_pairs()

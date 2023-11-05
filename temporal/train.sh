@@ -1,0 +1,1 @@
+python -u main.py --epochs 50 --log_steps 20 --eval_steps 300 --lr 3e-5 --model_name /data/MODEL/flan-t5-small --batch_size 8

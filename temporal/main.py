@@ -8,7 +8,7 @@ import random
 import numpy as np
 from tqdm import tqdm
 from src.data import get_dataloader
-from transformers import AdamW, RobertaTokenizer, get_linear_schedule_with_warmup
+from transformers import AdamW, RobertaTokenizer, get_linear_schedule_with_warmup, AutoTokenizer
 import argparse
 from torch.optim import Adam
 import torch.nn as nn
@@ -94,6 +94,8 @@ if __name__ == "__main__":
     parser.add_argument("--eval_only", action="store_true")
     parser.add_argument("--ignore_nonetype", action="store_true")
     parser.add_argument("--sample_rate", default=None, type=float, help="randomly sample a portion of the training data")
+    parser.add_argument("--model_name", default="roberta-base", type=str)
+
 
 
     args = parser.parse_args()
@@ -102,30 +104,35 @@ if __name__ == "__main__":
     REPORT_CLASS_NAMES = [ID2REL[i] for i in range(0,len(ID2REL) - 1)]
     REPORT_CLASS_LABELS = list(range(len(ID2REL) - 1))
 
-    output_dir = Path(f"./output/{args.seed}/maven_ignore_none_{args.ignore_nonetype}_{args.sample_rate}")
+    model_name = args.model_name.split("/")[-1]
+    output_dir = Path(f"./output/{args.seed}/maven_{model_name}_ignore_none_{args.ignore_nonetype}_{args.sample_rate}")
+    # output_dir = Path(f"./output/{args.seed}/maven_ignore_none_{args.ignore_nonetype}_{args.sample_rate}")
     output_dir.mkdir(exist_ok=True, parents=True)
         
     sys.stdout = open(os.path.join(output_dir, "log.txt"), 'w')
 
     set_seed(args.seed)
     
-    tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+    # tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
+
+    gpu_num = torch.cuda.device_count()
     print("loading data...")
     if not args.eval_only:
-        train_dataloader = get_dataloader(tokenizer, "train", data_dir="../data/MAVEN_ERE", max_length=256, shuffle=True, batch_size=args.batch_size, ignore_nonetype=args.ignore_nonetype, sample_rate=args.sample_rate)
-        dev_dataloader = get_dataloader(tokenizer, "valid", data_dir="../data/MAVEN_ERE", max_length=256, shuffle=False, batch_size=args.batch_size, ignore_nonetype=args.ignore_nonetype)
-    test_dataloader = get_dataloader(tokenizer, "test", data_dir="../data/MAVEN_ERE", max_length=256, shuffle=False, batch_size=args.batch_size, ignore_nonetype=args.ignore_nonetype)
+        train_dataloader = get_dataloader(tokenizer, "train", data_dir="../data/MAVEN_ERE", max_length=512, shuffle=True, batch_size=args.batch_size * gpu_num, ignore_nonetype=args.ignore_nonetype, sample_rate=args.sample_rate)
+        dev_dataloader = get_dataloader(tokenizer, "valid", data_dir="../data/MAVEN_ERE", max_length=512, shuffle=False, batch_size=args.batch_size * gpu_num, ignore_nonetype=args.ignore_nonetype)
+    test_dataloader = get_dataloader(tokenizer, "test", data_dir="../data/MAVEN_ERE", max_length=512, shuffle=False, batch_size=args.batch_size * gpu_num, ignore_nonetype=args.ignore_nonetype)
 
     print("loading model...")
-    model = Model(len(tokenizer), out_dim=label_num)
+    model = Model(len(tokenizer), out_dim=label_num, model_name=args.model_name)
     model = to_cuda(model)
 
     if not args.eval_only:
-        bert_optimizer = AdamW([p for p in model.encoder.model.parameters() if p.requires_grad], lr=args.bert_lr)
-        optimizer = Adam([p for p in model.scorer.parameters() if p.requires_grad], lr=args.lr)
-
-        scheduler = get_linear_schedule_with_warmup(bert_optimizer, num_warmup_steps=200, num_training_steps=len(train_dataloader) * args.epochs)
+        # bert_optimizer = AdamW([p for p in model.encoder.model.parameters() if p.requires_grad], lr=args.bert_lr)
+        optimizer = AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=1e-5)
+        total_steps = len(train_dataloader) * args.epochs
+        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(total_steps * 0.1), num_training_steps=total_steps)
     eps = 1e-8
 
     Loss = nn.CrossEntropyLoss(ignore_index=-100)
@@ -154,10 +161,10 @@ if __name__ == "__main__":
                 train_losses.append(loss.item())
                 loss.backward()
                 optimizer.step()
-                bert_optimizer.step()
+                # bert_optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
-                bert_optimizer.zero_grad()
+                # bert_optimizer.zero_grad()
 
                 glb_step += 1
 
@@ -195,6 +202,11 @@ if __name__ == "__main__":
         state = torch.load(os.path.join(output_dir, "best"))
         model.load_state_dict(state["model"])
     all_preds = predict(model, test_dataloader)
+    with open(os.path.join(output_dir, "predictions.json"), "w")as f:
+        f.writelines(json.dumps(all_preds))
     dump_result("../data/MAVEN_ERE/test.jsonl", all_preds, output_dir, ignore_nonetype=args.ignore_nonetype)
+
+    res = evaluate(model, test_dataloader, desc="Test")
+    print("Test results:", res)
 
     sys.stdout.close()

@@ -20,7 +20,13 @@ class Document:
         self.words = data["tokens"]
         self.events = []
         self.eid2mentions = {}
-        self.events = data["event_mentions"] + data["TIMEX"]
+        # print(data.keys())
+        self.events = []
+        for e in data["events"]:
+            self.events += e["mention"]
+        self.events += data["TIMEX"]
+        # self.events = sum([e["mention"] for e in data["events"]]) + data["TIMEX"]
+        # self.events = data["event_mentions"] + data["TIMEX"]
 
         self.sort_events()
         self.get_pairs(ignore_nonetype)
